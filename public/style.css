@@ -1,0 +1,458 @@
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime&family=Inter:wght@400;500;600;700;800&display=swap');
+
+:root {
+  /* Colors */
+  --color-black: #1a1a1a;
+  --color-white: #ffffff;
+  --color-bg: #f5f4f0;      /* Warm industrial grey/off-white */
+  --color-muted: #5e5e5e;
+  --color-accent: #e8f0fe;
+  
+  /* Borders */
+  --border-thick: 3px solid var(--color-black);
+  --border-thin: 2px solid var(--color-black);
+  
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'Courier Prime', Monaco, monospace;
+}
+
+/* Base resets & layouts */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-bg);
+  color: var(--color-black);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono {
+  font-family: var(--font-mono);
+  font-weight: bold;
+}
+.text-muted {
+  color: var(--color-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* App Header */
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  background-color: var(--color-white);
+  border-bottom: var(--border-thick);
+  font-size: 14px;
+  z-index: 10;
+}
+.brand {
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 18px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.room-badge {
+  background-color: var(--color-white);
+  color: var(--color-black);
+  padding: 6px 12px;
+  border: var(--border-thin);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: bold;
+}
+.stats {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-muted);
+}
+
+/* Host Screen Layout */
+.host-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  width: 100%;
+}
+
+/* Text Inputs (Host & Client) */
+.title-container {
+  position: absolute;
+  top: 32px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 70%;
+  max-width: 800px;
+  text-align: center;
+  z-index: 5;
+  pointer-events: none;
+}
+.title-input, .label-input, .join-input {
+  outline: none;
+  background: transparent;
+  color: var(--color-black);
+}
+.title-input {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 38px;
+  font-weight: 800;
+  text-align: center;
+  border: none;
+  border-bottom: var(--border-thin);
+  padding: 8px;
+  pointer-events: auto;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+.labels-row {
+  position: absolute;
+  top: 25%;
+  left: 0;
+  right: 0;
+  transform: translateY(-50%);
+  display: flex;
+  justify-content: space-between;
+  padding: 0 12%;
+  pointer-events: none;
+  z-index: 5;
+}
+.label-input-container {
+  pointer-events: auto;
+  width: 42%;
+  max-width: 500px;
+}
+.label-input {
+  width: 100%;
+  font-family: var(--font-sans);
+  font-size: 80px;
+  font-weight: 900;
+  border: none;
+  border-bottom: 4px solid var(--color-black);
+  padding: 8px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  letter-spacing: -0.03em;
+  line-height: 0.95;
+}
+.label-input:empty::before {
+  content: attr(placeholder);
+  color: #c0c0c0;
+}
+.label-input.right { text-align: right; }
+
+/* Canvas Area */
+.canvas-wrapper {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+canvas { display: block; width: 100%; height: 100%; }
+
+/* Cards Group (DRY layout for all cards) */
+.card, .share-panel, .passcode-card, .chosen-overlay-card {
+  background: var(--color-white);
+  border: var(--border-thick);
+  box-shadow: 6px 6px 0px var(--color-black);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Share / Invite Panel */
+.share-panel {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translate(-50%, 0);
+  padding: 24px;
+  align-items: center;
+  gap: 12px;
+  width: 320px;
+  z-index: 5;
+  transition: transform 0.25s cubic-bezier(0.18, 0.89, 0.32, 1.28), opacity 0.15s, visibility 0.15s;
+}
+.share-panel.hidden {
+  transform: translate(-50%, 40px);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.share-panel h3 {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  color: var(--color-muted);
+}
+.share-panel .close-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  color: var(--color-black);
+  line-height: 1;
+}
+.qr-placeholder {
+  width: 240px;
+  height: 240px;
+  background-color: #faf9f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.share-url {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: #faf9f6;
+  padding: 8px;
+  border: var(--border-thin);
+  width: 100%;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Overlays Group (DRY layout for fullscreen screens) */
+.passcode-overlay, .chosen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 24px;
+  text-align: center;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0.3s;
+}
+.passcode-overlay { background-color: var(--color-bg); }
+.passcode-overlay:not(.hidden), .chosen-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+.passcode-card {
+  padding: 40px;
+  width: 380px;
+  max-width: 90%;
+  gap: 20px;
+}
+.passcode-card h2 {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.passcode-error {
+  color: #d73a49;
+  font-size: 13px;
+  font-weight: bold;
+  font-family: var(--font-mono);
+}
+
+/* Reusable Utilitarian Buttons */
+.btn, .action-btn {
+  font-family: var(--font-sans);
+  background: var(--color-white);
+  color: var(--color-black);
+  border: var(--border-thin);
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: transform 0.1s, box-shadow 0.1s;
+  outline: none;
+  font-weight: 700;
+}
+.btn {
+  padding: 10px 16px;
+  font-size: 13px;
+  box-shadow: 3px 3px 0px var(--color-black);
+}
+.btn:hover, .action-btn:hover { background: var(--color-accent); }
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0px var(--color-black);
+}
+.btn-secondary { background: #faf9f6; }
+.btn-frozen {
+  background: #f8d7da !important;
+  color: #721c24 !important;
+}
+.btn-frozen:hover {
+  background: #f5c6cb !important;
+}
+
+/* Participant Layout & Card */
+.client-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+.card {
+  padding: 36px 24px;
+  width: 100%;
+  max-width: 380px;
+  gap: 24px;
+}
+.card h2 {
+  font-size: 24px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: -0.01em;
+}
+.p-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  margin: 0 auto;
+  border: var(--border-thick);
+  box-shadow: 4px 4px 0px var(--color-black);
+}
+.p-id {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: bold;
+  background: var(--color-bg);
+  border: var(--border-thin);
+  padding: 4px 12px;
+  align-self: center;
+}
+
+/* Participant Tilt Controls */
+.tilt-slider-container {
+  width: 100%;
+  background: var(--color-bg);
+  height: 14px;
+  border: var(--border-thin);
+  position: relative;
+  margin: 20px 0;
+}
+.tilt-slider-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transition: left 0.08s ease-out;
+  border: var(--border-thin);
+  box-shadow: 2px 2px 0px var(--color-black);
+}
+.tilt-slider-center-tick {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 4px;
+  height: 14px;
+  background: var(--color-black);
+  transform: translateX(-50%);
+}
+.action-btn {
+  width: 100%;
+  padding: 16px;
+  font-size: 16px;
+  font-weight: 800;
+  box-shadow: 4px 4px 0px var(--color-black);
+}
+.action-btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 1px 1px 0px var(--color-black);
+}
+.join-input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 24px;
+  text-align: center;
+  padding: 12px;
+  border: var(--border-thin);
+  text-transform: uppercase;
+}
+.join-input:focus { background: var(--color-accent); }
+.join-input::placeholder {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  text-transform: none;
+}
+.tilt-indicator-text {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+.labels-display {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  font-size: 12px;
+  color: var(--color-muted);
+  margin-top: -10px;
+  font-weight: bold;
+}
+.labels-display span {
+  max-width: 48%;
+  word-break: break-word;
+  white-space: normal;
+}
+
+/* Participant Chosen Overlay */
+.chosen-overlay-card {
+  padding: 40px 24px;
+  max-width: 340px;
+  width: 90%;
+  gap: 16px;
+  align-items: center;
+}
+.chosen-overlay h1 {
+  font-size: 28px;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: var(--color-black);
+  letter-spacing: -0.01em;
+  animation: bouncePulse 1.2s infinite alternate ease-in-out;
+}
+.chosen-overlay p {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-muted);
+  line-height: 1.4;
+}
+.chosen-overlay-icon {
+  font-size: 64px;
+  margin-bottom: 8px;
+  animation: float 1.8s infinite alternate ease-in-out;
+}
+
+/* Animations */
+@keyframes bouncePulse {
+  0% { transform: scale(0.96); }
+  100% { transform: scale(1.04); }
+}
+@keyframes float {
+  0% { transform: translateY(0px); }
+  100% { transform: translateY(-8px); }
+}

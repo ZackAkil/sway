@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sway - Host Screen</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <div class="brand">SWAY</div>
+    <div style="display: flex; gap: 16px; align-items: center;">
+      <button id="freeze-btn" class="btn btn-secondary" style="font-size: 13px; padding: 4px 10px;">Freeze</button>
+      <button id="toggle-invite-btn" class="btn btn-secondary" style="font-size: 13px; padding: 4px 10px;">Hide
+        Invite</button>
+      <div id="room-badge" class="room-badge">Room Code: <span id="room-code" class="mono">----</span></div>
+      <div id="stats" class="stats">Participants: <span id="participant-count" class="mono">0</span></div>
+    </div>
+  </header>
+
+  <div class="host-container">
+    <!-- Live Canvas in Background -->
+    <div class="canvas-wrapper">
+      <canvas id="swarm-canvas"></canvas>
+    </div>
+
+    <!-- Title Input Floating at Top -->
+    <div class="title-container">
+      <input type="text" id="title-label" class="title-input" value="Sway Question"
+        placeholder="Type a question / title here..." autocomplete="off">
+    </div>
+
+    <!-- Interactive HTML Inputs Floating on Top -->
+    <div class="labels-row">
+      <div class="label-input-container">
+        <div id="left-label" class="label-input" contenteditable="true" placeholder="Edit Option A...">Option A</div>
+      </div>
+      <div class="label-input-container">
+        <div id="right-label" class="label-input right" contenteditable="true" placeholder="Edit Option B...">Option B
+        </div>
+      </div>
+    </div>
+
+    <!-- Share Panel in Bottom Center -->
+    <div class="share-panel" id="share-panel">
+      <button id="close-invite-btn" class="close-btn">&times;</button>
+      <h3>Scan to Participate</h3>
+      <img id="qr-code-img" class="qr-placeholder" alt="QR Code" width="240" height="240">
+      <div class="share-url" id="share-url">http://...</div>
+      <button class="btn btn-secondary" id="copy-btn" style="width: 100%;">Copy Link</button>
+    </div>
+  </div>
+
+  <!-- Passcode Overlay -->
+  <div id="passcode-overlay" class="passcode-overlay hidden">
+    <div class="passcode-card">
+      <h2>Host Passcode Required</h2>
+      <p class="text-muted">Enter the administrator passcode to launch this Sway room.</p>
+      <input type="password" id="passcode-input" class="join-input" placeholder="PASSCODE" autocomplete="off">
+      <div id="passcode-error" class="passcode-error" style="display: none;">Incorrect Passcode. Try again.</div>
+      <button id="passcode-submit-btn" class="btn action-btn">Submit</button>
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const LERP_SPEED = 0.08; // Buttery smooth interpolation speed
+    const DOT_BASE_RADIUS = 10;
+
+    // Cookie helpers
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return decodeURIComponent(parts.pop().split(';').shift());
+      return null;
+    }
+
+    function setCookie(name, val, days) {
+      document.cookie = `${name}=${encodeURIComponent(val)}; path=/; max-age=${60 * 60 * 24 * days}`;
+    }
+
+    function deleteCookie(name) {
+      document.cookie = `${name}=; path=/; max-age=0`;
+    }
+
+    // Parse URL params
+    const urlParams = new URLSearchParams(window.location.search);
+
+    // State
+    let ws = null;
+    let roomCode = '';
+    const participants = new Map(); // id -> participant state
+    let chosenParticipantId = null; // currently highlighted participant
+    let isFrozen = false;
+    let hostPasscode = getCookie('sway_host_passcode') || '';
+
+    // UI elements
+    const roomCodeSpan = document.getElementById('room-code');
+    const participantCountSpan = document.getElementById('participant-count');
+    const leftLabelInput = document.getElementById('left-label');
+    const rightLabelInput = document.getElementById('right-label');
+    const titleLabelInput = document.getElementById('title-label');
+    const qrCodeImg = document.getElementById('qr-code-img');
+    const shareUrlDiv = document.getElementById('share-url');
+    const copyBtn = document.getElementById('copy-btn');
+    const canvas = document.getElementById('swarm-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // Generate or get Room Code
+    let urlRoom = urlParams.get('room');
+    if (!urlRoom) {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+      urlRoom = '';
+      for (let i = 0; i < 4; i++) {
+        urlRoom += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      // Set in URL
+      window.history.replaceState({}, '', `?room=${urlRoom}`);
+    }
+    roomCode = urlRoom.toUpperCase();
+    roomCodeSpan.textContent = roomCode;
+
+    // Build sharing link
+    const protocol = window.location.protocol;
+    const host = window.location.host;
+    const joinLink = `${protocol}//${host}/?room=${roomCode}`;
+    shareUrlDiv.textContent = joinLink;
+
+    // Load QR Code using open API (larger 240x240 size)
+    qrCodeImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(joinLink)}`;
+
+    // Toggle and Close Invite Panel logic
+    const toggleInviteBtn = document.getElementById('toggle-invite-btn');
+    const closeInviteBtn = document.getElementById('close-invite-btn');
+    const sharePanel = document.getElementById('share-panel');
+
+    function toggleSharePanel() {
+      const isHidden = sharePanel.classList.toggle('hidden');
+      toggleInviteBtn.textContent = isHidden ? 'Show Invite' : 'Hide Invite';
+    }
+
+    toggleInviteBtn.addEventListener('click', toggleSharePanel);
+
+    const freezeBtn = document.getElementById('freeze-btn');
+    freezeBtn.addEventListener('click', () => {
+      isFrozen = !isFrozen;
+      if (isFrozen) {
+        freezeBtn.textContent = 'Unfreeze';
+        freezeBtn.classList.add('btn-frozen');
+      } else {
+        freezeBtn.textContent = 'Freeze';
+        freezeBtn.classList.remove('btn-frozen');
+      }
+    });
+    closeInviteBtn.addEventListener('click', () => {
+      sharePanel.classList.add('hidden');
+      toggleInviteBtn.textContent = 'Show Invite';
+    });
+
+    // Copy to clipboard
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(joinLink).then(() => {
+        copyBtn.textContent = 'Copied!';
+        copyBtn.style.backgroundColor = '#d4edda';
+        copyBtn.style.color = '#155724';
+        setTimeout(() => {
+          copyBtn.textContent = 'Copy Link';
+          copyBtn.style.backgroundColor = '';
+          copyBtn.style.color = '';
+        }, 2000);
+      });
+    });
+
+    // Hash helper for generating deterministic unique offsets per participant
+    function getHash(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      return hash;
+    }
+
+    // Set up Canvas resizing
+    function resizeCanvas() {
+      canvas.width = canvas.clientWidth * window.devicePixelRatio;
+      canvas.height = canvas.clientHeight * window.devicePixelRatio;
+      ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // WebSocket logic
+    function connectWebSocket() {
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/ws?role=host&room=${roomCode}`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('Host connected to server');
+        if (hostPasscode) {
+          setCookie('sway_host_passcode', hostPasscode, 30);
+        }
+        document.getElementById('passcode-overlay').classList.add('hidden');
+        sendLabels();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'init_host') {
+            // Apply labels from server
+            if (data.labels) {
+              leftLabelInput.textContent = data.labels.left || 'Option A';
+              rightLabelInput.textContent = data.labels.right || 'Option B';
+              titleLabelInput.value = data.labels.title || 'Sway Question';
+            }
+            if (data.chosenParticipantId !== undefined) {
+              chosenParticipantId = data.chosenParticipantId;
+            }
+
+            // Re-populate participants
+            participants.clear();
+            if (data.participants) {
+              data.participants.forEach(p => {
+                addParticipant(p.id, p.color, p.name, p.lastTilt);
+              });
+            }
+            updateParticipantCount();
+
+          } else if (data.type === 'join') {
+            addParticipant(data.id, data.color, data.name, 0);
+            updateParticipantCount();
+
+          } else if (data.type === 'tilt') {
+            if (isFrozen) return;
+            const p = participants.get(data.id);
+            if (p) {
+              p.targetAngle = data.angle;
+            }
+
+          } else if (data.type === 'leave') {
+            const p = participants.get(data.id);
+            if (p) {
+              p.leaving = true; // Mark for fadeout animation
+            }
+            updateParticipantCount();
+          } else if (data.type === 'choose_participant') {
+            chosenParticipantId = data.id;
+          }
+        } catch (e) {
+          console.error('Error handling WebSocket message:', e);
+        }
+      };
+
+      ws.onclose = (event) => {
+        if (event.code === 1008) {
+          console.log('Authentication failed');
+          const wasIncorrect = (hostPasscode !== '');
+          deleteCookie('sway_host_passcode');
+          hostPasscode = '';
+          showPasscodeOverlay(wasIncorrect);
+          return;
+        }
+        console.log('Disconnected. Retrying in 3 seconds...');
+        setTimeout(connectWebSocket, 3000);
+      };
+
+      ws.onerror = (err) => {
+        console.error('WS Connection error:', err);
+      };
+    }
+
+    function addParticipant(id, color, name, initialAngle) {
+      const hash = getHash(id);
+
+      // Calculate deterministic static offsets
+      // Stagger them vertically: map hash to vertical range [-120, 120] relative to centerline
+      const offsetY = ((Math.abs(hash) % 200) - 100);
+
+      // Small horizontal variation so they don't form a perfect vertical line at 0 tilt
+      const offsetX = ((Math.abs(hash >> 3) % 20) - 10) / 100; // -0.1 to 0.1 normalized offset
+
+      // Slightly varied radius
+      const radius = DOT_BASE_RADIUS + ((Math.abs(hash >> 5) % 5) - 2); // 8 to 12 px
+
+      participants.set(id, {
+        id,
+        color,
+        name,
+        currentAngle: initialAngle,
+        targetAngle: initialAngle,
+        offsetX,
+        offsetY,
+        radius,
+        alpha: 0, // start transparent for fade-in
+        leaving: false
+      });
+    }
+
+    function updateParticipantCount() {
+      // Only count participants that are not in leaving state
+      let count = 0;
+      participants.forEach(p => {
+        if (!p.leaving) count++;
+      });
+      participantCountSpan.textContent = count;
+    }
+
+    function selectParticipant(id) {
+      chosenParticipantId = id;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'choose_participant',
+          id: id
+        }));
+      }
+    }
+
+    // Canvas click detector to choose participants
+    canvas.addEventListener('click', (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const clickX = event.clientX - rect.left;
+      const clickY = event.clientY - rect.top;
+
+      let clickedId = null;
+      let closestDistance = Infinity;
+      const HIT_THRESHOLD = 30; // 30px click area buffer
+
+      participants.forEach((p, id) => {
+        if (p.leaving) return;
+        if (p.lastX !== undefined && p.lastY !== undefined) {
+          const dist = Math.hypot(clickX - p.lastX, clickY - p.lastY);
+          if (dist < HIT_THRESHOLD && dist < closestDistance) {
+            closestDistance = dist;
+            clickedId = id;
+          }
+        }
+      });
+
+      if (clickedId) {
+        // Toggle selection
+        const targetId = (chosenParticipantId === clickedId) ? null : clickedId;
+        selectParticipant(targetId);
+      } else {
+        // Clear selection if clicked empty space
+        if (chosenParticipantId !== null) {
+          selectParticipant(null);
+        }
+      }
+    });
+
+    // Synchronize labels to Server
+    function sendLabels() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'labels',
+          left: leftLabelInput.textContent,
+          right: rightLabelInput.textContent,
+          title: titleLabelInput.value
+        }));
+      }
+    }
+
+    leftLabelInput.addEventListener('input', sendLabels);
+    rightLabelInput.addEventListener('input', sendLabels);
+    titleLabelInput.addEventListener('input', sendLabels);
+
+    // Smooth Canvas Rendering Loop (Runs at 60fps)
+    function render() {
+      // Clear canvas with transparent clear
+      const logicalWidth = canvas.width / window.devicePixelRatio;
+      const logicalHeight = canvas.height / window.devicePixelRatio;
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+
+      const centerY = logicalHeight / 2;
+      const startX = logicalWidth * 0.12;
+      const endX = logicalWidth * 0.88;
+      const lineWidth = endX - startX;
+
+      // 1. Draw center horizontal guide line (utilitarian bold look)
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(startX, centerY);
+      ctx.lineTo(endX, centerY);
+      ctx.stroke();
+
+      // Draw vertical tick marks at left, right and center
+      ctx.strokeStyle = '#1a1a1a';
+      ctx.lineWidth = 2;
+
+      // Left tick
+      ctx.beginPath();
+      ctx.moveTo(startX, centerY - 15);
+      ctx.lineTo(startX, centerY + 15);
+      ctx.stroke();
+
+      // Right tick
+      ctx.beginPath();
+      ctx.moveTo(endX, centerY - 15);
+      ctx.lineTo(endX, centerY + 15);
+      ctx.stroke();
+
+      // Center tick
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(logicalWidth / 2, centerY - 25);
+      ctx.lineTo(logicalWidth / 2, centerY + 25);
+      ctx.stroke();
+
+      // 2. Draw active participants
+      participants.forEach((p, id) => {
+        // Smoothly interpolate angle
+        p.currentAngle = LERP_SPEED * p.targetAngle + (1 - LERP_SPEED) * p.currentAngle;
+
+        // Smoothly animate alpha
+        if (p.leaving) {
+          p.alpha = LERP_SPEED * 0 + (1 - LERP_SPEED) * p.alpha;
+          if (p.alpha < 0.01) {
+            participants.delete(id);
+            return;
+          }
+        } else {
+          p.alpha = LERP_SPEED * 1.0 + (1 - LERP_SPEED) * p.alpha;
+        }
+
+        // Map angle [-1.0, 1.0] with offset to horizontal pixels
+        const normalizedPosition = p.currentAngle + p.offsetX;
+        const clampedPosition = Math.max(-1.1, Math.min(1.1, normalizedPosition));
+
+        // Map to line boundaries
+        const screenX = startX + ((clampedPosition + 1) / 2) * lineWidth;
+        const screenY = centerY + p.offsetY;
+
+        // Save coordinates for click/tap hit testing
+        p.lastX = screenX;
+        p.lastY = screenY;
+
+        const isChosen = (chosenParticipantId === p.id);
+        const hasSelection = (chosenParticipantId !== null);
+
+        // Visual adjustment for chosen status
+        let drawRadius = p.radius;
+        if (isChosen) {
+          drawRadius = p.radius * 1.5; // Scale up the chosen dot
+          ctx.globalAlpha = p.alpha; // Full visibility
+        } else if (hasSelection) {
+          ctx.globalAlpha = p.alpha * 0.18; // Dim all other dots significantly
+        } else {
+          ctx.globalAlpha = p.alpha; // Normal visibility
+        }
+
+        // Draw golden pulsing ring around the chosen participant
+        if (isChosen) {
+          const pulse = 1 + 0.12 * Math.sin(Date.now() * 0.006);
+          // Outer gold ring
+          ctx.strokeStyle = '#ffd700';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, drawRadius * pulse + 6, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // Inner black ring for contrast
+          ctx.strokeStyle = '#1a1a1a';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(screenX, screenY, drawRadius * pulse + 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        // Draw dot fill (no shadows for clean utilitarian feel)
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, drawRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Draw neat bold border around dot
+        ctx.strokeStyle = '#1a1a1a';
+        ctx.lineWidth = isChosen ? 3 : 2;
+        ctx.beginPath();
+        ctx.arc(screenX, screenY, drawRadius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Draw participant ID in small monospaced font right above the dot (only if not fading out)
+        if (p.alpha > 0.8) {
+          ctx.fillStyle = '#1a1a1a';
+          ctx.font = isChosen ? 'bold 11px "Courier Prime", monospace' : 'bold 9px "Courier Prime", monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(p.id, screenX, screenY - drawRadius - 8);
+        }
+      });
+
+      if (isFrozen) {
+        ctx.fillStyle = 'rgba(26, 26, 26, 0.03)';
+        ctx.fillRect(0, 0, logicalWidth, logicalHeight);
+
+        ctx.fillStyle = '#721c24';
+        ctx.font = 'bold 14px "Courier Prime", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('• SWARM FREEZE ACTIVE •', logicalWidth / 2, 40);
+      }
+
+      ctx.globalAlpha = 1.0;
+      requestAnimationFrame(render);
+    }
+
+    // Passcode overlay handling
+    const passcodeOverlay = document.getElementById('passcode-overlay');
+    const passcodeInput = document.getElementById('passcode-input');
+    const passcodeError = document.getElementById('passcode-error');
+    const passcodeSubmitBtn = document.getElementById('passcode-submit-btn');
+
+    function showPasscodeOverlay(showError = false) {
+      passcodeOverlay.classList.remove('hidden');
+      passcodeError.style.display = showError ? 'block' : 'none';
+      passcodeInput.value = '';
+      passcodeInput.focus();
+    }
+
+    passcodeSubmitBtn.addEventListener('click', () => {
+      const code = passcodeInput.value.trim();
+      if (code.length > 0) {
+        hostPasscode = code;
+        setCookie('sway_host_passcode', code, 30);
+        connectWebSocket();
+      }
+    });
+
+    passcodeInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        passcodeSubmitBtn.click();
+      }
+    });
+
+    // Start
+    connectWebSocket();
+    requestAnimationFrame(render);
+  </script>
+
+
+</body>
+
+</html>

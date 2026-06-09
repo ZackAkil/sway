@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Sway - Participant</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <header>
+    <div class="brand">SWAY</div>
+    <div id="connection-status" class="room-badge"
+      style="background-color: #ffeef0; color: #d73a49; border-color: #fcb8c0;">Disconnected</div>
+  </header>
+
+  <div class="client-container">
+    <!-- Screen 1: Join Room (shown if no valid room query param) -->
+    <div id="join-screen" class="card" style="display: none;">
+      <h2>Join a Session</h2>
+      <p class="text-muted">Enter the 4-character Room Code displayed on the host's screen to connect.</p>
+      <input type="text" id="room-code-input" class="join-input" maxlength="4" placeholder="CODE" autocomplete="off">
+      <button id="join-btn" class="btn action-btn">Join</button>
+    </div>
+
+    <!-- Screen 2: Enable Tilt & Connect Permission -->
+    <div id="permission-screen" class="card" style="display: none;">
+      <h2>Ready to Sway?</h2>
+      <p class="text-muted">You will be assigned a random name and color. Tilt your phone left or right to move your dot
+        on the main screen.</p>
+
+      <div id="ios-warning" class="text-muted"
+        style="display: none; background: #fff8e1; border: 1px solid #ffe082; padding: 10px; border-radius: 6px; color: #b78103;">
+        This browser requires orientation permissions. Please click the button below to grant access when prompted.
+      </div>
+
+      <button id="enable-tilt-btn" class="btn action-btn">Enable Tilt & Connect</button>
+    </div>
+
+    <!-- Screen 3: Controller (Active Tilt Tracking) -->
+    <div id="controller-screen" class="card" style="display: none;">
+      <div id="title-display"
+        style="font-size: 18px; font-weight: 600; color: #495057; line-height: 1.3; margin-bottom: 8px;">Sway Question
+      </div>
+      <div class="p-avatar" id="avatar"></div>
+      <div class="p-id" id="participant-display">P-000</div>
+
+      <div class="tilt-slider-container">
+        <div class="tilt-slider-center-tick"></div>
+        <div class="tilt-slider-dot" id="slider-dot" style="left: 50%;"></div>
+      </div>
+
+      <div class="labels-display">
+        <span id="left-label-display">Option A</span>
+        <span id="right-label-display">Option B</span>
+      </div>
+
+      <div class="tilt-indicator-text" id="tilt-angle-display">Center</div>
+      <p class="text-muted">Keep your phone upright and tilt it left or right to sway the main dot.</p>
+    </div>
+  </div>
+
+  <!-- Fullscreen Chosen Overlay -->
+  <div id="chosen-overlay" class="chosen-overlay">
+    <div class="chosen-overlay-card">
+      <h1>You are Chosen!</h1>
+      <p>Your dot is highlighted on the host's screen</p>
+    </div>
+  </div>
+
+  <script>
+    let ws = null;
+    let roomCode = '';
+    let participantId = '';
+    let participantColor = '#cccccc';
+    let currentTilt = 0; // -1.0 to 1.0
+    let smoothedTilt = 0;
+    let trackingActive = false;
+    let lastSentTilt = null;
+    let sendInterval = null;
+
+    // UI elements
+    const joinScreen = document.getElementById('join-screen');
+    const permissionScreen = document.getElementById('permission-screen');
+    const controllerScreen = document.getElementById('controller-screen');
+    const roomCodeInput = document.getElementById('room-code-input');
+    const joinBtn = document.getElementById('join-btn');
+    const enableTiltBtn = document.getElementById('enable-tilt-btn');
+    const connectionStatus = document.getElementById('connection-status');
+    const avatar = document.getElementById('avatar');
+    const participantDisplay = document.getElementById('participant-display');
+    const sliderDot = document.getElementById('slider-dot');
+    const leftLabelDisplay = document.getElementById('left-label-display');
+    const rightLabelDisplay = document.getElementById('right-label-display');
+    const titleDisplay = document.getElementById('title-display');
+    const tiltAngleDisplay = document.getElementById('tilt-angle-display');
+    const iosWarning = document.getElementById('ios-warning');
+    const chosenOverlay = document.getElementById('chosen-overlay');
+
+    // Parse URL room code
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlRoom = urlParams.get('room');
+
+    if (urlRoom && urlRoom.trim().length > 0) {
+      roomCode = urlRoom.trim().toUpperCase();
+      showScreen(permissionScreen);
+      // Check if iOS warning is needed
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        iosWarning.style.display = 'block';
+      }
+    } else {
+      showScreen(joinScreen);
+    }
+
+    // Handlers
+    joinBtn.addEventListener('click', () => {
+      const code = roomCodeInput.value.trim().toUpperCase();
+      if (code.length > 0) {
+        roomCode = code;
+        // Update URL query string without reloading page
+        window.history.pushState({}, '', `?room=${roomCode}`);
+        showScreen(permissionScreen);
+        if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          iosWarning.style.display = 'block';
+        }
+      } else {
+        alert('Please enter a valid room code.');
+      }
+    });
+
+    // Handle enter key on input
+    roomCodeInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        joinBtn.click();
+      }
+    });
+
+    enableTiltBtn.addEventListener('click', async () => {
+      // 1. Request Orientation permission if required
+      let permitted = false;
+      if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permissionState = await DeviceOrientationEvent.requestPermission();
+          permitted = (permissionState === 'granted');
+        } catch (error) {
+          console.error('Permission request failed:', error);
+          alert('Could not request device orientation permission. Please try reloading the page over HTTPS.');
+        }
+      } else {
+        permitted = true; // Non-iOS or doesn't support requestPermission API
+      }
+
+      if (permitted) {
+        // 2. Connect to WebSocket server
+        connectWebSocket();
+      } else {
+        alert('Device orientation permission is required to participate in this interactive experience.');
+      }
+    });
+
+    function showScreen(screen) {
+      joinScreen.style.display = 'none';
+      permissionScreen.style.display = 'none';
+      controllerScreen.style.display = 'none';
+      screen.style.display = 'flex';
+    }
+
+    function connectWebSocket() {
+      connectionStatus.textContent = 'Connecting...';
+      connectionStatus.style.backgroundColor = '#fff3cd';
+      connectionStatus.style.color = '#856404';
+      connectionStatus.style.borderColor = '#ffeeba';
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws?role=participant&room=${roomCode}`;
+
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        connectionStatus.textContent = `Connected: ${roomCode}`;
+        connectionStatus.style.backgroundColor = '#e6ffed';
+        connectionStatus.style.color = '#22863a';
+        connectionStatus.style.borderColor = '#bef5cb';
+
+        showScreen(controllerScreen);
+        startTracking();
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+
+          if (data.type === 'init_participant') {
+            participantId = data.id;
+            participantColor = data.color;
+
+            // Update UI elements
+            avatar.style.backgroundColor = participantColor;
+            participantDisplay.textContent = participantId;
+
+            if (data.labels) {
+              updateLabels(data.labels);
+            }
+            if (data.chosen) {
+              setChosenState(true);
+            } else {
+              setChosenState(false);
+            }
+          } else if (data.type === 'labels_update') {
+            if (data.labels) {
+              updateLabels(data.labels);
+            }
+          } else if (data.type === 'chosen') {
+            setChosenState(data.state);
+          }
+        } catch (e) {
+          console.error('Error parsing message from server:', e);
+        }
+      };
+
+      ws.onclose = (event) => {
+        console.log('WS disconnected:', event);
+        stopTracking();
+
+        connectionStatus.textContent = 'Disconnected';
+        connectionStatus.style.backgroundColor = '#ffeef0';
+        connectionStatus.style.color = '#d73a49';
+        connectionStatus.style.borderColor = '#fcb8c0';
+
+        alert('Disconnected from server. Attempting to reconnect...');
+        showScreen(permissionScreen);
+      };
+
+      ws.onerror = (error) => {
+        console.error('WS Error:', error);
+      };
+    }
+
+    function updateLabels(labels) {
+      leftLabelDisplay.textContent = labels.left || 'Left';
+      rightLabelDisplay.textContent = labels.right || 'Right';
+      if (labels.title) {
+        titleDisplay.textContent = labels.title;
+        titleDisplay.style.display = 'block';
+      } else {
+        titleDisplay.style.display = 'none';
+      }
+    }
+
+    function handleOrientation(event) {
+      let gamma = event.gamma; // left/right tilt: -90 to 90
+      if (gamma === null) return;
+
+      // Clamp to range [-45, 45] degrees
+      const adjustedGamma = Math.max(-45, Math.min(45, gamma));
+
+      // Map to [-1.0, 1.0] range
+      currentTilt = adjustedGamma / 45;
+    }
+
+    function startTracking() {
+      if (trackingActive) return;
+
+      window.addEventListener('deviceorientation', handleOrientation);
+      trackingActive = true;
+
+      // Local UI Animation loop (runs at 60fps for silky smooth local slider feedback)
+      function animateLocalSlider() {
+        if (!trackingActive) return;
+
+        // Apply smooth exponential moving average
+        smoothedTilt = smoothedTilt * 0.75 + currentTilt * 0.25;
+
+        // Map to percentage [0%, 100%] for style.left
+        const percent = ((smoothedTilt + 1) / 2) * 100;
+        sliderDot.style.left = `${percent}%`;
+
+        updateTiltDisplay();
+
+        requestAnimationFrame(animateLocalSlider);
+      }
+
+      requestAnimationFrame(animateLocalSlider);
+
+      // Throttled transmission loop (sends orientation data every 60ms to prevent network congestion)
+      sendInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          // Only send if the value has changed significantly (avoid redundant packets)
+          const roundedTilt = Math.round(smoothedTilt * 100) / 100; // limit resolution to 2 decimals
+          if (roundedTilt !== lastSentTilt) {
+            ws.send(JSON.stringify({
+              type: 'tilt',
+              angle: roundedTilt
+            }));
+            lastSentTilt = roundedTilt;
+          }
+        }
+      }, 60);
+    }
+
+    function stopTracking() {
+      trackingActive = false;
+      window.removeEventListener('deviceorientation', handleOrientation);
+      if (sendInterval) {
+        clearInterval(sendInterval);
+        sendInterval = null;
+      }
+    }
+
+    function updateTiltDisplay() {
+      if (Math.abs(smoothedTilt) < 0.15) {
+        tiltAngleDisplay.textContent = 'Center';
+        tiltAngleDisplay.style.color = '#868e96';
+      } else if (smoothedTilt < 0) {
+        const pct = Math.round(Math.abs(smoothedTilt) * 100);
+        tiltAngleDisplay.textContent = `Tilted Left: ${pct}%`;
+        tiltAngleDisplay.style.color = '#1a73e8';
+      } else {
+        const pct = Math.round(smoothedTilt * 100);
+        tiltAngleDisplay.textContent = `Tilted Right: ${pct}%`;
+        tiltAngleDisplay.style.color = '#22863a';
+      }
+    }
+
+    function setChosenState(state) {
+      if (state) {
+        chosenOverlay.style.backgroundColor = participantColor;
+        chosenOverlay.classList.add('active');
+        if (navigator.vibrate) {
+          navigator.vibrate([150, 100, 150]);
+        }
+      } else {
+        chosenOverlay.classList.remove('active');
+      }
+    }
+  </script>
+</body>
+
+</html>

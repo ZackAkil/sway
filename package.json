@@ -1,0 +1,15 @@
+{
+  "name": "sway",
+  "version": "1.0.0",
+  "description": "A minimalist web app for real-time mobile tilt interaction",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "node --env-file-if-exists=.env server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ws": "^8.17.0"
+  }
+}
