@@ -4,6 +4,7 @@
   "description": "A minimalist web app for real-time mobile tilt interaction",
   "main": "server.js",
   "type": "module",
+  "license": "Apache-2.0",
   "scripts": {
     "start": "node --env-file-if-exists=.env server.js",
     "dev": "node --env-file-if-exists=.env server.js"
