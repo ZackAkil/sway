@@ -428,9 +428,9 @@
           p.alpha = LERP_SPEED * 1.0 + (1 - LERP_SPEED) * p.alpha;
         }
 
-        // Map angle [-1.0, 1.0] with offset to horizontal pixels
-        const normalizedPosition = p.currentAngle + p.offsetX;
-        const clampedPosition = Math.max(-1.1, Math.min(1.1, normalizedPosition));
+        // Map angle [-1.0, 1.0] with offset (attenuated at the extremes so 100% tilt lands on the scale ends)
+        const normalizedPosition = p.currentAngle + p.offsetX * (1 - Math.abs(p.currentAngle));
+        const clampedPosition = Math.max(-1.0, Math.min(1.0, normalizedPosition));
 
         // Map to line boundaries
         const screenX = startX + ((clampedPosition + 1) / 2) * lineWidth;
